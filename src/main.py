@@ -1,0 +1,122 @@
+import asyncio
+import logging
+import sys
+from contextlib import asynccontextmanager
+
+# Configure WindowsSelectorEventLoopPolicy on Windows for SSL socket support
+if sys.platform == "win32":
+    policy_cls = getattr(asyncio, "WindowsSelectorEventLoopPolicy", None)
+    if isinstance(policy_cls, type):
+        policy = policy_cls()
+        if isinstance(policy, asyncio.AbstractEventLoopPolicy):
+            asyncio.set_event_loop_policy(policy)
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+try:
+    from .api.routes.health import router as health_router
+    from .config.database import engine
+    from .config.rabbitmq import get_rabbitmq_connection
+    from .config.redis_client import get_redis_client
+    from .config.settings import get_settings
+except ImportError:
+    from src.api.routes.health import router as health_router
+    from src.config.database import engine
+    from src.config.rabbitmq import get_rabbitmq_connection
+    from src.config.redis_client import get_redis_client
+    from src.config.settings import get_settings
+
+logger = logging.getLogger("ai_service")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+
+settings = get_settings()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan manager for FastAPI. Opens connections on startup and cleans up on shutdown."""
+    logger.info("Initializing ai-service dependencies...")
+
+    # 1. Stash DB Engine on app.state
+    app.state.db_engine = engine
+
+    # 2. Redis Client
+    app.state.redis = None
+    redis_client = None
+    try:
+        redis_client = get_redis_client()
+        await redis_client.ping()
+        app.state.redis = redis_client
+        logger.info("Redis connected successfully")
+    except Exception as e:
+        logger.warning(f"Redis connection warning during startup: {e}")
+        # Keep client instance on app.state so /health can report actual error
+        if redis_client is not None:
+            app.state.redis = redis_client
+
+    # 3. RabbitMQ Connection
+    app.state.rabbitmq = None
+    try:
+        rabbitmq_conn = await get_rabbitmq_connection()
+        app.state.rabbitmq = rabbitmq_conn
+        logger.info("RabbitMQ connected successfully")
+    except Exception as e:
+        logger.warning(f"RabbitMQ connection warning during startup: {e}")
+
+    yield
+
+    # Shutdown sequence
+    logger.info("Shutting down ai-service dependencies...")
+
+    shutdown_rabbitmq = getattr(app.state, "rabbitmq", None)
+    if shutdown_rabbitmq is not None:
+        try:
+            await shutdown_rabbitmq.close()
+            logger.info("RabbitMQ connection closed.")
+        except Exception as e:
+            logger.warning(f"Error closing RabbitMQ connection: {e}")
+
+    shutdown_redis = getattr(app.state, "redis", None)
+    if shutdown_redis is not None:
+        try:
+            await shutdown_redis.close()
+            logger.info("Redis connection closed.")
+        except Exception as e:
+            logger.warning(f"Error closing Redis connection: {e}")
+
+    shutdown_db = getattr(app.state, "db_engine", None)
+    if shutdown_db is not None:
+        try:
+            await shutdown_db.dispose()
+            logger.info("Database engine disposed.")
+        except Exception as e:
+            logger.warning(f"Error disposing database engine: {e}")
+
+
+app = FastAPI(
+    title="FlowMetrics AI Service",
+    description="Agentic AI analyst microservice for FlowMetrics platform",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(health_router)
+
+
+@app.get("/")
+async def root():
+    return {
+        "service": "ai-service",
+        "status": "online",
+        "docs": "/docs",
+        "health": "/health",
+    }
