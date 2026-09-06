@@ -1,1 +1,1 @@
-"""Graph nodes package."""
+"""Graph package."""
