@@ -15,12 +15,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 try:
+    from src.api.routes.chat import router as chat_router
     from .api.routes.health import router as health_router
     from .config.database import engine
     from .config.rabbitmq import get_rabbitmq_connection
     from .config.redis_client import get_redis_client
     from .config.settings import get_settings
 except ImportError:
+    from src.api.routes.health import router as chat_router
     from src.api.routes.health import router as health_router
     from src.config.database import engine
     from src.config.rabbitmq import get_rabbitmq_connection

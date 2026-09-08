@@ -4,7 +4,7 @@ from src.graph.state import AgentState
 
 settings = get_settings()
 client = genai.Client(api_key=settings.GEMINI_API_KEY)
-MODEL_ID = "gemini-2.5-flash"
+MODEL_ID = settings.GEMINI_MODEL
 
 async def response_writer(state: AgentState) -> dict:
     if state.get("final_answer"):

@@ -1,9 +1,8 @@
 """Graph nodes package."""
-from typing import TypedDict, List, Optional, Annotated
-from langgraph.graph.message import add_messages
+from typing import TypedDict, List, Optional
 
 class AgentState(TypedDict):
-    messages:Annotated[List,add_messages]
+    messages:List
     repo_id:int
     org_id: int
     user_question: str
