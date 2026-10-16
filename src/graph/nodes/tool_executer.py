@@ -3,9 +3,14 @@ import asyncio
 from google import genai
 from google.genai import types
 
-from src.config.settings import get_settings
-from src.graph.state import AgentState
-from src.tools.tool_definitions import TOOL_FUNCTIONS, execute_tool
+try:
+    from src.config.settings import get_settings
+    from src.graph.state import AgentState
+    from src.tools.tool_definitions import TOOL_FUNCTIONS, execute_tool
+except ImportError:
+    from src.config.settings import get_settings  # type: ignore[no-redef]
+    from src.graph.state import AgentState  # type: ignore[no-redef]
+    from src.tools.tool_definitions import TOOL_FUNCTIONS, execute_tool  # type: ignore[no-redef]
 
 settings = get_settings()
 client = genai.Client(api_key=settings.GEMINI_API_KEY)
@@ -32,8 +37,8 @@ async def tool_executor(state: AgentState) -> dict:
             )
             break
         except Exception as e:
-            if ("429" in str(e) or "RESOURCE_EXHAUSTED" in str(e)) and attempt < 3:
-                await asyncio.sleep(10 * (attempt + 1))
+            if ("429" in str(e) or "503" in str(e) or "RESOURCE_EXHAUSTED" in str(e) or "UNAVAILABLE" in str(e)) and attempt < 3:
+                await asyncio.sleep(2 * (attempt + 1))
             else:
                 raise
     if response is None:
@@ -78,7 +83,7 @@ async def tool_executor(state: AgentState) -> dict:
         result = {"error": f"Tool '{tool_name}' failed: {str(e)}"}
 
     tool_response_content = types.Content(
-        role="tool",
+        role="user",
         parts=[types.Part.from_function_response(name=tool_name, response={"result": result})],
     )
     return {
@@ -89,6 +94,4 @@ async def tool_executor(state: AgentState) -> dict:
     }
 
 
-tool_executer = tool_executor
-
-__all__ = ["tool_executor", "tool_executer"]
+__all__ = ["tool_executor"]

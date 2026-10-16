@@ -13,6 +13,7 @@ def get_redis_client() -> aioredis.Redis:
     return aioredis.from_url(
         settings.REDIS_URL,
         decode_responses=True,
+        protocol=2,
         socket_connect_timeout=2.0,
         socket_timeout=2.0,
     )

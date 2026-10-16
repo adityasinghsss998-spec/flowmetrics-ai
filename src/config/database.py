@@ -1,14 +1,5 @@
-import asyncio
 import ssl
-import sys
 from collections.abc import AsyncGenerator
-
-if sys.platform == "win32":
-    policy_cls = getattr(asyncio, "WindowsSelectorEventLoopPolicy", None)
-    if isinstance(policy_cls, type):
-        policy = policy_cls()
-        if isinstance(policy, asyncio.AbstractEventLoopPolicy):
-            asyncio.set_event_loop_policy(policy)
 
 from sqlalchemy import (
     BigInteger,

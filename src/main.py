@@ -14,20 +14,13 @@ if sys.platform == "win32":
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-try:
-    from src.api.routes.chat import router as chat_router
-    from .api.routes.health import router as health_router
-    from .config.database import engine
-    from .config.rabbitmq import get_rabbitmq_connection
-    from .config.redis_client import get_redis_client
-    from .config.settings import get_settings
-except ImportError:
-    from src.api.routes.health import router as chat_router
-    from src.api.routes.health import router as health_router
-    from src.config.database import engine
-    from src.config.rabbitmq import get_rabbitmq_connection
-    from src.config.redis_client import get_redis_client
-    from src.config.settings import get_settings
+from src.api.routes.chat import router as chat_router
+from src.api.routes.health import router as health_router
+from src.api.routes.hitl import router as hitl_router
+from src.config.database import engine
+from src.config.rabbitmq import get_rabbitmq_connection
+from src.config.redis_client import get_redis_client
+from src.config.settings import get_settings
 
 logger = logging.getLogger("ai_service")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -112,6 +105,8 @@ app.add_middleware(
 )
 
 app.include_router(health_router)
+app.include_router(chat_router)
+app.include_router(hitl_router)
 
 
 @app.get("/")

@@ -12,3 +12,7 @@ class AgentState(TypedDict):
 
     final_answer: Optional[str]
     error: Optional[str]
+    requires_approval: bool
+    proposed_action: Optional[dict]
+    approval_status: Optional[str]
+    run_id: str

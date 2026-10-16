@@ -8,7 +8,10 @@ name in execute_tool() at the bottom.
 
 from typing import Any
 
-from src.tools import analytics_tool
+try:
+    from . import analytics_tool
+except ImportError:
+    from src.tools import analytics_tool  # type: ignore[no-redef]
 
 
 def get_dora_metrics(repo_id: int, days: int = 30) -> None:
