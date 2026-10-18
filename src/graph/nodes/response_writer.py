@@ -1,10 +1,6 @@
-from google import genai
-from src.config.settings import get_settings
+from src.graph.nodes.tool_executer import _generate
 from src.graph.state import AgentState
 
-settings = get_settings()
-client = genai.Client(api_key=settings.GEMINI_API_KEY)
-MODEL_ID = settings.GEMINI_MODEL
 
 async def response_writer(state: AgentState) -> dict:
     if state.get("final_answer"):
@@ -16,5 +12,5 @@ async def response_writer(state: AgentState) -> dict:
         "Write a clear, direct answer grounded ONLY in this data. "
         "Do not invent numbers that aren't present above."
     )
-    response = await client.aio.models.generate_content(model=MODEL_ID, contents=prompt)
+    response = await _generate(contents=prompt)
     return {"final_answer": response.text}

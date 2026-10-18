@@ -26,9 +26,11 @@ class Settings(BaseSettings):
 
     # Security
     JWT_ACCESS_SECRET: str = ""
-
+    ALERT_EMAIL: str = ""
+    
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-3.8-flash"
+    GEMINI_FALLBACK_MODEL: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",

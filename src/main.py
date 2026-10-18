@@ -1,8 +1,11 @@
+from fastapi.dependencies.utils import analyze_param
 import asyncio
 import logging
 import sys
 from contextlib import asynccontextmanager
-
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from src.anomaly.scanner import scan_all_repos
+from src.api.routes.anomaly import router as anomaly_router
 # Configure WindowsSelectorEventLoopPolicy on Windows for SSL socket support
 if sys.platform == "win32":
     policy_cls = getattr(asyncio, "WindowsSelectorEventLoopPolicy", None)
@@ -58,11 +61,22 @@ async def lifespan(app: FastAPI):
         logger.info("RabbitMQ connected successfully")
     except Exception as e:
         logger.warning(f"RabbitMQ connection warning during startup: {e}")
-
-    yield
+    
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(
+        scan_all_repos,"interval",hours=1,args=[app],
+        id="anomaly_scan",max_instances=1,coalesce=True,
+    )
+    scheduler.start()
+    app.state.scheduler = scheduler 
+    logger.info("Anomaly scan scheduled every hour.")
+    yield 
 
     # Shutdown sequence
     logger.info("Shutting down ai-service dependencies...")
+    scheduler = getattr(app.state, "scheduler", None)
+    if scheduler is not None:
+        scheduler.shutdown(wait=False)    
 
     shutdown_rabbitmq = getattr(app.state, "rabbitmq", None)
     if shutdown_rabbitmq is not None:
@@ -107,6 +121,7 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(chat_router)
 app.include_router(hitl_router)
+app.include_router(anomaly_router)
 
 
 @app.get("/")

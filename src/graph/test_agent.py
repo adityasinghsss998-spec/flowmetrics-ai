@@ -10,7 +10,7 @@ async def main():
     config = {"configurable": {"thread_id": run_id}}
 
     result = await graph.ainvoke({
-        "messages": [], "repo_id": 1, "org_id": 1,
+        "messages": [], "repo_id": 2, "org_id": 1,
         "user_question": "What is our DORA score?",
         "tools_called": [], "tool_results": {}, "iterations": 0,
         "final_answer": None, "error": None,

@@ -14,7 +14,7 @@ async def intent_parser(state: AgentState) -> dict:
     return {
         "messages": [initial_message],
         "tools_called": [],
-        "tool_results": {},
+        "tool_results": {}, 
         "iterations": 0,
         "requires_approval": is_action_request,
     }

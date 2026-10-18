@@ -75,7 +75,7 @@ async def chat(payload: ChatRequest, request: Request):
 
     if redis is not None:
         await redis.set(
-            f"ai_run:{run_id}",
+            f"ai_result:{run_id}",
             json.dumps({"answer": result["final_answer"], "toolsCalled": result["tools_called"]}),
             ex=60 * 60 * 24,
         )
@@ -100,8 +100,10 @@ async def chat_stream(payload: ChatRequest):
 async def get_run(run_id: str, request: Request):
     redis = request.app.state.redis
     if redis is None:
-        return {"status": "unavailable", "reason": "redis not connected"}
-    raw = await redis.get(f"ai_run:{run_id}")
-    if raw is None:
-        return {"status": "not_found"}
-    return {"status": "complete", **json.loads(raw)}
+        return {"status connected nhi ha": "unavailable", "reason": "redis not connected"}
+    raw = await redis.get(f"ai_result:{run_id}")
+    if raw is not None:
+        return {"status hogya": "complete", **json.loads(raw)}
+    if await redis.exists(f"hitl_pending:{run_id}"):
+        return {"status hehe": "pending_approval"}
+    return {"status": "not_found"}

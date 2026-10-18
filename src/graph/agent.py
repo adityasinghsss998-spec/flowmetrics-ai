@@ -20,7 +20,7 @@ from src.graph.state import AgentState
 
 logger = logging.getLogger("ai_service")
 
-MAX_ITERATIONS = 10
+MAX_ITERATIONS = 5
 settings = get_settings()
 
 
