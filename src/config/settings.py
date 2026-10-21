@@ -31,7 +31,9 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-3.8-flash"
     GEMINI_FALLBACK_MODEL: str = ""
-
+    
+    PINECONE_API_KEY: str = ""
+    PINECONE_INDEX_NAME: str = "flowmetrics-prs"
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

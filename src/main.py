@@ -24,6 +24,7 @@ from src.config.database import engine
 from src.config.rabbitmq import get_rabbitmq_connection
 from src.config.redis_client import get_redis_client
 from src.config.settings import get_settings
+from src.api.routes.rag import router as rag_router
 
 logger = logging.getLogger("ai_service")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -122,7 +123,7 @@ app.include_router(health_router)
 app.include_router(chat_router)
 app.include_router(hitl_router)
 app.include_router(anomaly_router)
-
+app.include_router(rag_router)
 
 @app.get("/")
 async def root():

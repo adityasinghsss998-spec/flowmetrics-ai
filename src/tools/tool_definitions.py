@@ -95,6 +95,16 @@ def get_contributor_trend(repo_id: int, username: str, days: int = 90) -> None:
         days: Time window in days.
     """
 
+def search_context(repo_id: int, query: str) -> None:
+       """Search PR titles and commit messages for what the team actually worked on.
+       Use this alongside the number-based tools when a question asks WHAT changed
+       or WHY, not just how much.
+
+       Args:
+           repo_id: The repository ID.
+           query: What to look for, e.g. "authentication" or "database migration".
+       """
+
 
 # The list Gemini actually receives as `tools=`.
 TOOL_FUNCTIONS: list[Any] = [
