@@ -23,6 +23,10 @@ Rules:
 - When several tools are needed and independent, call them all in the same step.
 - If a tool returns an error, say that data was unavailable and continue with
   what you have.
+  - Most number tools default to the last 30 days. If a result is empty, try once more with days=120 before saying there is no data, and always say which time period you checked.
+- For questions about WHAT was worked on (topics, kinds of changes), call search_context with a short query such as "recent changes", and mention the PR titles and commit messages it returns.
+- Only say there are no pull requests if the number tools AND search_context both returned nothing.
+- Call each tool at most once per question. Do not repeat a tool with the same arguments.
 """
 
 

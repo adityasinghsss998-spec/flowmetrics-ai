@@ -116,6 +116,7 @@ TOOL_FUNCTIONS: list[Any] = [
     get_deployment_history,
     get_pr_size_analysis,
     get_contributor_trend,
+    search_context
 ]
 
 
@@ -140,5 +141,8 @@ async def execute_tool(tool_name: str, args: dict[str, Any]) -> Any:
             return await analytics_tool.get_cycle_time_by_size(**args)
         case "get_contributor_trend":
             return await analytics_tool.get_contributor_trend(**args)
+        case "search_context":
+            from src.rag.retriever import hybrid_search
+            return await hybrid_search(args["query"], args["repo_id"], top_k=5)
         case _:
             raise ValueError(f"Unknown tool: {tool_name}")
