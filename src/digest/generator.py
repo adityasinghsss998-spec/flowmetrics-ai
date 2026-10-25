@@ -1,3 +1,4 @@
+from click import prompt
 import json
 import logging
 
@@ -48,4 +49,29 @@ async def collect_week_data(repo_id):
 def build_prompt(org_name, repo_name, data):
     # default=str lets json handle values like decimals and dates that it can't write by itself.
     data_text = json.dumps(data, indent=2, default=str)
-    
+
+    prompt = (
+        "You are writing the weekly engineering summary email for the team "
+        + org_name + ", about the repository " + repo_name + ".\n\n"
+        "Rules:\n"
+        "- Use ONLY the data below. Never invent numbers.\n"
+        "- If a section says 'unavailable', is empty, or is null, say that data was not available.\n"
+        "- Zero deployments or zero pull requests means no activity. "
+        "Do not call that good or bad performance.\n"
+        "- Write plain text only. No markdown symbols such as ** or #.\n"
+        "- Keep it to about 150 to 200 words.\n\n"
+        "Write these four parts, in this order, each as a short paragraph:\n"
+        "1. Overview of the week.\n"
+        "2. What went well.\n"
+        "3. What needs attention (name stuck pull requests by number if there are any).\n"
+        "4. One suggested action for next week.\n\n"
+        "DATA:\n" + data_text
+    ) 
+    return prompt 
+
+async def generate_digest(repo_id,repo_name,org_name):
+    data=await collect_week_data(repo_id)
+    prompt=build_prompt(org_name,repo_name,data)
+    response=await generate_text(prompt)
+    subject = "Weekly engineering summary: " + repo_name
+    return {"subject": subject, "narrative": response.strip()}

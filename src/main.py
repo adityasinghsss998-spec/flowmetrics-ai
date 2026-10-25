@@ -6,6 +6,8 @@ from contextlib import asynccontextmanager
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from src.anomaly.scanner import scan_all_repos
 from src.api.routes.anomaly import router as anomaly_router
+from src.api.routes.digest import router as digest_router
+from src.consumers.weekly_digest import start_weekly_digest_consumer
 # Configure WindowsSelectorEventLoopPolicy on Windows for SSL socket support
 if sys.platform == "win32":
     policy_cls = getattr(asyncio, "WindowsSelectorEventLoopPolicy", None)
@@ -71,6 +73,14 @@ async def lifespan(app: FastAPI):
     scheduler.start()
     app.state.scheduler = scheduler 
     logger.info("Anomaly scan scheduled every hour.")
+
+    # 5. Weekly digest listener
+    if app.state.rabbitmq is not None:
+        try:
+            await start_weekly_digest_consumer(app)
+            logger.info("Weekly digest listener started")
+        except Exception as e:
+            logger.warning(f"Could not start weekly digest listener: {e}")
     yield 
 
     # Shutdown sequence
@@ -124,7 +134,7 @@ app.include_router(chat_router)
 app.include_router(hitl_router)
 app.include_router(anomaly_router)
 app.include_router(rag_router)
-
+app.include_router(digest_router)
 @app.get("/")
 async def root():
     return {
