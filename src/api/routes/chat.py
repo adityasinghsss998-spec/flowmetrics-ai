@@ -94,8 +94,8 @@ async def chat(payload: ChatRequest, request: Request, caller: Caller = Depends(
     if "__interrupt__" in result:
         interrupt_list = result["__interrupt__"]
         proposed_action = interrupt_list[0].value["proposed_action"]
-
-        if redis is None:
+       
+        if redis is None: 
             raise HTTPException(status_code=503, detail="Approvals are unavailable right now.")
 
         pending_record = {
