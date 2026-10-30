@@ -1,0 +1,18 @@
+# Virtual environment folder (do not copy host OS binaries into Linux container)
+.venv
+
+# Environment variable file containing secrets (must never be baked into the image)
+.env
+
+# Git version control metadata
+.git
+
+# Python compiled bytecode and cache directories
+__pycache__
+*.pyc
+.mypy_cache
+.ruff_cache
+
+# Local test scripts
+test_day1.py
+

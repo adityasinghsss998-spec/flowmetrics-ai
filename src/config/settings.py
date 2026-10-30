@@ -24,7 +24,7 @@ class Settings(BaseSettings):
 
     # Analytics Service
     ANALYTICS_SERVICE_URL: str = "http://localhost:3003"
-
+    AUTH_SERVICE_URL: str = "http://localhost:3001"
     # Security
     JWT_ACCESS_SECRET: str = ""
     ALERT_EMAIL: str = ""

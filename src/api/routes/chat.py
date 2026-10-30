@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -8,6 +9,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from src.api.rate_limit import acquire_run_lock, check_rate_limit, release_run_lock
+from src.api.run_store import load_run, new_run_record, save_run, update_run
 from src.api.security import Caller, authorize_repo, require_internal_caller
 from src.config.rabbitmq import publish_message
 from src.graph.agent import get_agent_graph
@@ -16,12 +18,24 @@ logger = logging.getLogger("ai_service")
 router = APIRouter()
 
 # A question that runs longer than this is stopped, so a stuck run never hangs forever.
-RUN_TIMEOUT_SECONDS = 80
+RUN_TIMEOUT_SECONDS = 150
+
+# If a run still says "running" after this long, the server probably restarted in the middle of it.
+RUN_STALE_SECONDS = 200
 
 # The free Gemini tier allows only a few requests per minute for the whole service,
 # so only this many questions run at the same time. Others wait their turn.
 MAX_CONCURRENT_RUNS = 2
 run_slots = asyncio.Semaphore(MAX_CONCURRENT_RUNS)
+
+# Running tasks must be kept in a set. Otherwise Python may delete a task while it is still running.
+background_tasks = set()
+
+
+class RunFailed(Exception):
+    def __init__(self, message):
+        super().__init__(message)
+        self.message = message
 
 
 class ChatRequest(BaseModel):
@@ -61,22 +75,91 @@ async def run_agent(payload, question, run_id):
         # The timeout covers both waiting for a free slot and the run itself.
         return await asyncio.wait_for(invoke_with_slot(), timeout=RUN_TIMEOUT_SECONDS)
     except asyncio.TimeoutError:
-        raise HTTPException(status_code=504, detail="The analysis took too long. Please try again.")
-    except HTTPException:
-        raise
+        raise RunFailed("The analysis took too long. Please try again.")
     except Exception:
         # The real error goes to our log. The user only sees a friendly message.
         logger.exception("Agent run failed")
-        raise HTTPException(status_code=502, detail="The AI analyst is unavailable right now. Please try again.")
+        raise RunFailed("The AI analyst is unavailable right now. Please try again.")
 
 
-@router.post("/chat")
+async def store_interrupt(app, payload, run_id, user_id, result):
+    """The agent paused because an action needs a human to approve it."""
+    redis = app.state.redis
+    interrupt_list = result["__interrupt__"]
+    proposed_action = interrupt_list[0].value["proposed_action"]
+
+    pending_record = {
+        "repoId": payload.repoId,
+        "requestedBy": user_id,
+        "proposedAction": proposed_action,
+    }
+    await redis.set("hitl_pending:" + run_id, json.dumps(pending_record), ex=60 * 60 * 48)
+
+    rabbitmq_conn = getattr(app.state, "rabbitmq", None)
+    if rabbitmq_conn is not None:
+        try:
+            await publish_message(
+                rabbitmq_conn,
+                "ai.action_requested",
+                {
+                    "runId": run_id,
+                    "repoId": payload.repoId,
+                    "proposedAction": proposed_action.get("reasoning", ""),
+                    "actionType": proposed_action.get("type", "post_pr_comment"),
+                    "reasoning": proposed_action.get("reasoning", ""),
+                    "requesterEmail": "",
+                },
+            )
+        except Exception as error:
+            logger.warning("Failed to publish ai.action_requested: %s", error)
+
+    await update_run(redis, run_id, {"status": "pending_approval", "proposedAction": proposed_action})
+
+
+async def mark_failed(redis, run_id, message):
+    try:
+        await update_run(redis, run_id, {"status": "failed", "error": message})
+    except Exception as error:
+        logger.warning("Could not save the failed status: %s", error)
+
+
+async def background_run(app, payload, question, run_id, user_id):
+    """Runs the agent after the HTTP response has already been sent."""
+    redis = app.state.redis
+    try:
+        result = await run_agent(payload, question, run_id)
+
+        if "__interrupt__" in result:
+            await store_interrupt(app, payload, run_id, user_id, result)
+        else:
+            answer = result.get("final_answer")
+            if not answer:
+                answer = "I could not produce an answer from the available data."
+            tools_called = result.get("tools_called", [])
+            await update_run(redis, run_id, {"status": "complete", "answer": answer, "toolsCalled": tools_called})
+
+    except RunFailed as error:
+        await mark_failed(redis, run_id, error.message)
+    except Exception:
+        logger.exception("Background run crashed")
+        await mark_failed(redis, run_id, "The AI analyst is unavailable right now. Please try again.")
+    finally:
+        try:
+            await release_run_lock(redis, user_id)
+        except Exception as error:
+            logger.warning("Could not release the run lock: %s", error)
+
+
+@router.post("/chat", status_code=202)
 async def chat(payload: ChatRequest, request: Request, caller: Caller = Depends(require_internal_caller)):
     question = payload.question.strip()
     if question == "":
         raise HTTPException(status_code=422, detail="Please enter a question.")
 
     redis = request.app.state.redis
+    if redis is None:
+        raise HTTPException(status_code=503, detail="The AI analyst is unavailable right now.")
+
     await check_rate_limit(redis, caller.user_id)
     await authorize_repo(caller, payload.repoId)
 
@@ -86,64 +169,61 @@ async def chat(payload: ChatRequest, request: Request, caller: Caller = Depends(
 
     run_id = str(uuid.uuid4())
     try:
-        result = await run_agent(payload, question, run_id)
-    finally:
+        await save_run(redis, run_id, new_run_record(caller.user_id, payload.repoId))
+    except Exception:
+        logger.exception("Could not save the new run")
         await release_run_lock(redis, caller.user_id)
+        raise HTTPException(status_code=503, detail="The AI analyst is unavailable right now.")
 
-    # The agent paused and wants a human to approve an action.
-    if "__interrupt__" in result:
-        interrupt_list = result["__interrupt__"]
-        proposed_action = interrupt_list[0].value["proposed_action"]
-       
-        if redis is None: 
-            raise HTTPException(status_code=503, detail="Approvals are unavailable right now.")
+    task = asyncio.create_task(background_run(request.app, payload, question, run_id, caller.user_id))
+    background_tasks.add(task)
+    task.add_done_callback(background_tasks.discard)
 
-        pending_record = {
-            "repoId": payload.repoId,
-            "requestedBy": caller.user_id,
-            "proposedAction": proposed_action,
+    # The answer is fetched later with GET /runs/{run_id}.
+    return {"runId": run_id, "status": "running"}
+
+
+@router.get("/runs/{run_id}")
+async def get_run(run_id: str, request: Request, caller: Caller = Depends(require_internal_caller)):
+    redis = request.app.state.redis
+    if redis is None:
+        raise HTTPException(status_code=503, detail="Run lookup is unavailable right now.")
+
+    record = await load_run(redis, run_id)
+    if record is None:
+        return {"status": "not_found"}
+
+    # Only the person who asked can read the result. Others get "not found".
+    if record.get("requestedBy") != caller.user_id:
+        return {"status": "not_found"}
+
+    status = record.get("status")
+
+    if status == "running":
+        age_seconds = int(time.time()) - int(record.get("startedAt", 0))
+        if age_seconds > RUN_STALE_SECONDS:
+            return {"status": "failed", "message": "The analysis was interrupted. Please try again."}
+        return {"status": "running"}
+
+    if status == "complete":
+        return {
+            "status": "complete",
+            "answer": record.get("answer"),
+            "toolsCalled": record.get("toolsCalled", []),
         }
-        await redis.set("hitl_pending:" + run_id, json.dumps(pending_record), ex=60 * 60 * 48)
 
-        rabbitmq_conn = getattr(request.app.state, "rabbitmq", None)
-        if rabbitmq_conn is not None:
-            try:
-                await publish_message(
-                    rabbitmq_conn,
-                    "ai.action_requested",
-                    {
-                        "runId": run_id,
-                        "repoId": payload.repoId,
-                        "proposedAction": proposed_action.get("reasoning", ""),
-                        "actionType": proposed_action.get("type", "post_pr_comment"),
-                        "reasoning": proposed_action.get("reasoning", ""),
-                        "requesterEmail": "",
-                    },
-                )
-            except Exception as error:
-                logger.warning("Failed to publish ai.action_requested: %s", error)
+    if status == "pending_approval":
+        return {"status": "pending_approval", "runId": run_id, "proposedAction": record.get("proposedAction")}
 
-        return {"status": "pending_approval", "runId": run_id, "proposedAction": proposed_action}
+    if status == "failed":
+        return {"status": "failed", "message": record.get("error") or "The analysis failed. Please try again."}
 
-    answer = result.get("final_answer")
-    if not answer:
-        answer = "I could not produce an answer from the available data."
-    tools_called = result.get("tools_called", [])
-
-    # Saving the answer for /runs is a bonus. If Redis fails, the user still gets the answer.
-    if redis is not None:
-        try:
-            result_record = {"answer": answer, "toolsCalled": tools_called, "requestedBy": caller.user_id}
-            await redis.set("ai_result:" + run_id, json.dumps(result_record), ex=60 * 60 * 24)
-        except Exception as error:
-            logger.warning("Could not save run result: %s", error)
-
-    return {"answer": answer, "toolsCalled": tools_called, "runId": run_id}
+    return {"status": "not_found"}
 
 
 @router.post("/chat/stream")
 async def chat_stream(payload: ChatRequest, request: Request, caller: Caller = Depends(require_internal_caller)):
-    """Experimental. It does not support questions that need approval. Use /chat for those."""
+    """Experimental and not used by the frontend. It does not support questions that need approval."""
     question = payload.question.strip()
     if question == "":
         raise HTTPException(status_code=422, detail="Please enter a question.")
@@ -172,38 +252,9 @@ async def chat_stream(payload: ChatRequest, request: Request, caller: Caller = D
                     yield "data: " + json.dumps(event) + "\n\n"
         except Exception:
             logger.exception("Streaming run failed")
-            error_event = {"error": "The AI analyst is unavailable right now."}
-            yield "data: " + json.dumps(error_event) + "\n\n"
+            yield "data: " + json.dumps({"error": "The AI analyst is unavailable right now."}) + "\n\n"
         finally:
             await release_run_lock(redis, caller.user_id)
 
-    # These headers stop proxies from holding the stream back until it finishes.
     headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
     return StreamingResponse(event_generator(), media_type="text/event-stream", headers=headers)
-
-
-@router.get("/runs/{run_id}")
-async def get_run(run_id: str, request: Request, caller: Caller = Depends(require_internal_caller)):
-    redis = request.app.state.redis
-    if redis is None:
-        raise HTTPException(status_code=503, detail="Run lookup is unavailable right now.")
-
-    raw_result = await redis.get("ai_result:" + run_id)
-    if raw_result is not None:
-        record = json.loads(raw_result)
-        # Only the person who asked can read the answer. Others get "not found".
-        if record.get("requestedBy") != caller.user_id:
-            return {"status": "not_found"}
-        return {
-            "status": "complete",
-            "answer": record.get("answer"),
-            "toolsCalled": record.get("toolsCalled", []),
-        }
-
-    raw_pending = await redis.get("hitl_pending:" + run_id)
-    if raw_pending is not None:
-        record = json.loads(raw_pending)
-        if record.get("requestedBy") == caller.user_id:
-            return {"status": "pending_approval"}
-
-    return {"status": "not_found"}

@@ -164,9 +164,9 @@ def create_engine_and_session() -> tuple[AsyncEngine, async_sessionmaker[AsyncSe
         connect_args=connect_args,
         echo=False,
         pool_pre_ping=True,
-        pool_size=5,
-        max_overflow=10,
-    )
+        pool_size=3,      
+        max_overflow=2,
+    ) 
 
     session_factory = async_sessionmaker(
         bind=engine,

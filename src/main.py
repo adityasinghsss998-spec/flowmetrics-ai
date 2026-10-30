@@ -8,6 +8,7 @@ from src.anomaly.scanner import scan_all_repos
 from src.api.routes.anomaly import router as anomaly_router
 from src.api.routes.digest import router as digest_router
 from src.consumers.weekly_digest import start_weekly_digest_consumer
+from src.api.security import require_internal_caller
 # Configure WindowsSelectorEventLoopPolicy on Windows for SSL socket support
 if sys.platform == "win32":
     policy_cls = getattr(asyncio, "WindowsSelectorEventLoopPolicy", None)
@@ -16,7 +17,7 @@ if sys.platform == "win32":
         if isinstance(policy, asyncio.AbstractEventLoopPolicy):
             asyncio.set_event_loop_policy(policy)
 
-from fastapi import FastAPI
+from fastapi import FastAPI,Depends
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.routes.chat import router as chat_router
@@ -114,27 +115,39 @@ async def lifespan(app: FastAPI):
             logger.warning(f"Error disposing database engine: {e}")
 
 
+is_production=settings.ENVIRONMENT == "production"
+docs_address = "/docs"
+openapi_address = "/openapi.json"
+if is_production:
+    docs_address = None
+    openapi_address = None
+
 app = FastAPI(
     title="FlowMetrics AI Service",
     description="Agentic AI analyst microservice for FlowMetrics platform",
     version="1.0.0",
+    docs_url=docs_address,
+    redoc_url=None,
+    openapi_url=openapi_address,
     lifespan=lifespan,
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
+if not is_production:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+protected = [Depends(require_internal_caller)]
+ 
 app.include_router(health_router)
-app.include_router(chat_router)
-app.include_router(hitl_router)
-app.include_router(anomaly_router)
-app.include_router(rag_router)
-app.include_router(digest_router)
+app.include_router(chat_router, dependencies=protected)
+app.include_router(hitl_router, dependencies=protected)
+app.include_router(anomaly_router, dependencies=protected)
+app.include_router(digest_router, dependencies=protected)
+app.include_router(rag_router, dependencies=protected)
 @app.get("/")
 async def root():
     return {
