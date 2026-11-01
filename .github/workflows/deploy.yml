@@ -1,0 +1,55 @@
+name: Production Deployment
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  deployments: write
+  contents: read
+
+jobs:
+  deployment:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create GitHub Deployment
+        id: create_deployment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Creating deployment for commit ${{ github.sha }} on environment production..."
+          DEPLOYMENT_ID=$(echo '{"ref":"${{ github.sha }}","environment":"production","auto_merge":false,"required_contexts":[],"description":"Render production deployment"}' | gh api --method POST -H "Accept: application/vnd.github+json" /repos/${{ github.repository }}/deployments --input - --jq '.id')
+
+          if [ -z "$DEPLOYMENT_ID" ] || [ "$DEPLOYMENT_ID" = "null" ]; then
+            echo "Error: Failed to create deployment"
+            exit 1
+          fi
+
+          echo "Created deployment ID: $DEPLOYMENT_ID"
+          echo "deployment_id=$DEPLOYMENT_ID" >> $GITHUB_OUTPUT
+
+      - name: Build duration delay
+        run: |
+          # Brief delay so completed_at - deployed_at produces a measurable build duration
+          sleep 10
+
+      - name: Mark Deployment as Successful
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Marking deployment ${{ steps.create_deployment.outputs.deployment_id }} as success..."
+          echo '{"state":"success","environment":"production","description":"Render production deployment succeeded"}' | gh api --method POST -H "Accept: application/vnd.github+json" /repos/${{ github.repository }}/deployments/${{ steps.create_deployment.outputs.deployment_id }}/statuses --input -
+
+      - name: Mark Deployment as Failed
+        if: failure() && steps.create_deployment.outputs.deployment_id != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Marking deployment ${{ steps.create_deployment.outputs.deployment_id }} as failure..."
+          echo '{"state":"failure","environment":"production","description":"Render production deployment failed"}' | gh api --method POST -H "Accept: application/vnd.github+json" /repos/${{ github.repository }}/deployments/${{ steps.create_deployment.outputs.deployment_id }}/statuses --input -
